@@ -5,6 +5,7 @@ library(knitr)
 library(lme4)
 library(lmerTest)
 library(MuMIn)
+library(progress)
 library(rlang)
 
 # function that transforms factors into factors and change contrasts
@@ -13,7 +14,9 @@ prepare_factor_groups <- function(my_data) {
   for (variable in colnames(my_data)) {
     if (class(my_data[[variable]]) == "character") {
       my_data[[variable]] <- as.factor(my_data[[variable]])
-      contrasts(my_data[[variable]]) <- "contr.sum"
+      if (length(levels(my_data[[variable]])) > 1) {
+        contrasts(my_data[[variable]]) <- "contr.sum"
+      } 
     }
   }
   return(my_data)
@@ -29,6 +32,7 @@ logit2prob <- function(logit) {
 
 # function to get all level estimates from a glmer model
 get_all_estimates <- function(my_variable, my_model, my_data) {
+  
   selected_variable <- my_model %>%
     filter(grepl(my_variable, term)) %>%
     select(estimate)
@@ -315,9 +319,17 @@ step_one_way <- function(my_formula, my_data, step_type = "up") {
 
   
   how_many_steps <- length(fixed_terms)
+  tick_progress <- 100/sum((1:how_many_steps))
+
   if (step_type == "down") {
+    tick_progress <- 100/(sum((1:how_many_steps))-1)
     how_many_steps <- how_many_steps - 1
   }
+  
+  pb <- progress_bar$new(
+    format = paste("  stepping", step_type, "[:bar] :percent in :elapsed"),
+    total = 100, clear = FALSE, width= 60)
+  
   
   for (step in c(1:how_many_steps)) {
     if (step_type == "up") {
@@ -328,6 +340,7 @@ step_one_way <- function(my_formula, my_data, step_type = "up") {
     
     formula_count <- length(all_formulas)
     for (i in c(1:formula_count)) {
+      pb$tick(tick_progress)
       if (mixed_model) {
         if (grepl("\\|", all_formulas[i])) {
           a_formula <- paste(all_formulas[i])
@@ -357,11 +370,15 @@ step_one_way <- function(my_formula, my_data, step_type = "up") {
       
       comparison_string <- gsub("\\n", " -- ", paste(attr(models_anova, "heading"), collapse = " "))
       
+      convergence_problem <- suppressWarnings(paste(summary(current_model)$optinfo$conv$lme4$messages, collapse = " "))
+      
+      
       current_model_df <- data.frame(step = step,
                                      model_formula = a_formula,
                                      r_squared_fixed = variance_explained$R2m[1],
                                      r_squared_total = variance_explained$R2c[1],
-                                     comparison = comparison_string)
+                                     comparison = comparison_string,
+                                     message = convergence_problem)
       
       current_model_df$model_formula <- as.character(current_model_df$model_formula)
       current_model_df <- bind_cols(current_model_df, model_comparison)
